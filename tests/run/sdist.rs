@@ -526,6 +526,105 @@ fn sdist_auto_discovered_license_files_at_sdist_root() {
     );
 }
 
+/// A path dependency in a parent directory moves the sdist root up to its crate,
+/// whose `LICENSE` is then already at the path of an explicit `license-files`
+/// entry. The same content is not a conflict; a different file still is.
+#[test]
+fn sdist_explicit_license_file_shared_with_path_dependency() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let dep_dir = temp_dir.path();
+    fs_err::create_dir_all(dep_dir.join("src")).unwrap();
+    fs_err::write(dep_dir.join("src/lib.rs"), "").unwrap();
+    fs_err::write(
+        dep_dir.join("Cargo.toml"),
+        indoc!(
+            r#"
+            [package]
+            name = "dep"
+            version = "0.1.0"
+            edition = "2021"
+
+            [workspace]
+            "#
+        ),
+    )
+    .unwrap();
+    fs_err::write(dep_dir.join("LICENSE"), "MIT\n").unwrap();
+
+    let project_dir = dep_dir.join("python-pkg");
+    fs_err::create_dir_all(project_dir.join("src")).unwrap();
+    fs_err::write(project_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs_err::write(
+        project_dir.join("Cargo.toml"),
+        indoc!(
+            r#"
+            [package]
+            name = "python-pkg"
+            version = "0.1.0"
+            edition = "2021"
+
+            [dependencies]
+            dep = { path = ".." }
+
+            [workspace]
+            "#
+        ),
+    )
+    .unwrap();
+    fs_err::write(
+        project_dir.join("pyproject.toml"),
+        indoc!(
+            r#"
+            [project]
+            name = "python-pkg"
+            version = "0.1.0"
+            license-files = ["LICENSE"]
+
+            [build-system]
+            requires = ["maturin>=1.0,<2.0"]
+            build-backend = "maturin"
+
+            [tool.maturin]
+            bindings = "bin"
+            "#
+        ),
+    )
+    .unwrap();
+    fs_err::write(project_dir.join("LICENSE"), "MIT\n").unwrap();
+    assert_sdist_license_files(
+        &project_dir,
+        "sdist-explicit-license-file-shared-with-path-dependency",
+        expect![[r#"
+            {
+                "python_pkg-0.1.0/Cargo.toml",
+                "python_pkg-0.1.0/LICENSE",
+                "python_pkg-0.1.0/PKG-INFO",
+                "python_pkg-0.1.0/pyproject.toml",
+                "python_pkg-0.1.0/python-pkg/Cargo.lock",
+                "python_pkg-0.1.0/python-pkg/Cargo.toml",
+                "python_pkg-0.1.0/python-pkg/LICENSE",
+                "python_pkg-0.1.0/python-pkg/src/main.rs",
+                "python_pkg-0.1.0/src/lib.rs",
+            }
+        "#]],
+    );
+
+    fs_err::write(project_dir.join("LICENSE"), "Apache-2.0\n").unwrap();
+    let err = match other::build_source_distribution(
+        &project_dir,
+        SdistGenerator::Cargo,
+        "sdist-explicit-license-file-differs-from-path-dependency",
+    ) {
+        Ok(_) => panic!("expected a different file at the same sdist path to be rejected"),
+        Err(err) => err,
+    };
+    let err = format!("{err:#}");
+    assert!(
+        err.contains("was already added from"),
+        "unexpected error: {err}"
+    );
+}
+
 #[test]
 fn git_sdist_rejects_parent_relative_pyproject_metadata_paths() {
     let temp_dir = tempfile::tempdir().unwrap();

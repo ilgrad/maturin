@@ -268,12 +268,23 @@ pub(super) fn add_pyproject_metadata(
                     .expect("matched path starts with glob root")
                     .to_path_buf();
                 if seen.insert(license_path.clone()) {
+                    let target = root_dir.join(&license_path);
+                    let source = pyproject_dir.join(&license_path);
+                    // A path dependency in a parent directory moves the sdist root up to
+                    // its crate, which may already have put the same file at this path.
+                    // A file with different content still fails in `add_file`.
+                    if let Some(existing) = writer.target_source(&target)
+                        && fs_err::read(existing)? == fs_err::read(&source)?
+                    {
+                        debug!(
+                            "License file `{}` is already in the sdist from `{}`",
+                            license_path.display(),
+                            existing.display()
+                        );
+                        continue;
+                    }
                     debug!("Including license file `{}`", license_path.display());
-                    writer.add_file(
-                        root_dir.join(&license_path),
-                        pyproject_dir.join(&license_path),
-                        false,
-                    )?;
+                    writer.add_file(target, source, false)?;
                 }
             }
         }
